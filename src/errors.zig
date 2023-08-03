@@ -1,4 +1,6 @@
 pub const std = @import("std");
+pub const builtin = @import("builtin");
+pub const php = @import("php.zig");
 pub const internal = @import("internal.zig");
 pub const zend = @import("zend.zig");
 

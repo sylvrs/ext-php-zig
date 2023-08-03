@@ -157,10 +157,11 @@ pub fn init(name: []const u8, comptime func: anytype, comptime metadata: []const
                 // call the function
                 // TODO: optional & default values
                 if (execute_data.argCount() != fn_info.params.len) {
-                    php.panicWithFmt(
-                        "expected {d} arguments, got {d} arguments",
-                        .{ fn_info.params.len, execute_data.argCount() },
-                    );
+                    switch (builtin.os.tag) {
+                        .windows => php.panicWithFmt("expected{d} arguments, got {d} arguments", .{ fn_info.params.len, execute_data.argCount() }),
+                        else => errors.wrongExpectedCountError(fn_info.params.len, fn_info.params.len),
+                    }
+                    return;
                 }
 
                 // extract arguments as tuple
