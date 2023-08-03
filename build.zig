@@ -12,19 +12,15 @@ const Arch = switch (builtin.cpu.arch) {
 
 /// PHPIncludePaths is the list of include paths to use inside the PHP devel pack
 const PHPIncludePaths = [_][]const u8{ "", "main", "TSRM", "Zend", "ext" };
-/// PHPLibraryName is the name of the PHP library to link against based on ZTS
-const PHPLibraryName = "php8" ++ if (UsingZTS) "ts" else "";
-/// PHPDevelPath is the path to the PHP devel pack based on the PHP version & arch
-// const PHPDevelPath = std.fmt.comptimePrint("php-devel-pack-{s}{s}-Win32-vs16-{s}", .{
-//     PHPVersion,
-//     if (!UsingZTS) "-nts" else "",
-//     Arch,
-// });
+// PHPDevelPath is the path to the PHP devel pack on Windows
 const PHPDevelPath = "php-devel-pack";
-/// PHPDevelURL is the URL to the PHP devel pack based on the PHP version & arch
-// const PHPDevelURL = std.fmt.comptimePrint("https://windows.php.net/downloads/releases/archives/{s}.zip", .{
-//     PHPDevelPath,
-// });
+
+const PHPOptions = struct {
+    include_path: []const u8,
+    library_path: []const u8,
+    library_name: []const u8,
+    executable_path: []const u8,
+};
 
 // Here is the line used to resolve the dependency loop upon a new build
 // Once Zig fixes their dependency loop issue, this can be removed
@@ -43,6 +39,22 @@ pub fn build(b: *std.Build) !void {
         .dependencies = &.{},
     });
 
+    const php_options: PHPOptions = switch (builtin.os.tag) {
+        .windows => .{
+            .include_path = std.fmt.comptimePrint("{s}/include", .{PHPDevelPath}),
+            .library_path = std.fmt.comptimePrint("{s}/lib", .{PHPDevelPath}),
+            .library_name = "php8" ++ (if (UsingZTS) "ts" else "") ++ ".lib",
+            .executable_path = "C:\\Users\\Matt\\Downloads\\php-8.2.7-Win32-vs16-x64\\php.exe",
+        },
+        .linux => .{
+            .include_path = "/home/matthew/PHP-Binaries/bin/php7/include/php",
+            .library_path = "/home/matthew/PHP-Binaries/bin/php7/lib",
+            .library_name = "php",
+            .executable_path = "php",
+        },
+        inline else => @compileError("MacOS is not supported yet"),
+    };
+
     // zig build example
     const example_step = b.step("example", "Runs the main example");
 
@@ -57,28 +69,25 @@ pub fn build(b: *std.Build) !void {
     });
     lib.addModule("php", module);
 
-    // TODO: resolve segfault from this step
-    // var devel_step = std.Build.Step.init(.{
-    //     .id = .custom,
-    //     .name = "Setup PHP devel pack",
-    //     .makeFn = setupDevelPack,
-    //     .owner = b,
-    // });
-    // lib.step.dependOn(&devel_step);
-
     inline for (PHPIncludePaths) |path| {
-        lib.addIncludePath(std.fmt.comptimePrint("{s}/include/{s}", .{ PHPDevelPath, path }));
+        lib.addIncludePath(.{
+            .path = std.fmt.comptimePrint("{s}/{s}", .{
+                php_options.include_path,
+                path,
+            }),
+        });
     }
-    // include the library path for the PHP dll
-    lib.addLibraryPath(std.fmt.comptimePrint("{s}/lib", .{PHPDevelPath}));
-    // link the PHP lib file
-    lib.linkSystemLibraryName(PHPLibraryName);
+    // include the library path for the PHP dll if needed
+    if (php_options.include_path.len > 0) {
+        lib.addLibraryPath(.{ .path = php_options.library_path });
+    }
+    // link the PHP library
+    lib.linkSystemLibraryName("php");
     // add the artifact
-    const build_step = b.addInstallArtifact(lib);
+    const build_step = b.addInstallArtifact(lib, .{});
     // run php
     const run_php = b.addSystemCommand(&.{
-        "C:\\Users\\Matt\\Downloads\\php-8.2.7-Win32-vs16-x64\\php.exe",
-        // "php",
+        php_options.executable_path,
         "-d",
         std.fmt.comptimePrint("extension=zig-out/lib/{s}", .{
             libraryName ++ switch (builtin.os.tag) {
