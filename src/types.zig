@@ -45,6 +45,7 @@ pub const Mixed = Type{ .ptr = null, .type_mask = internal.MAY_BE_ANY };
 pub const Bool = Type{ .ptr = null, .type_mask = internal.MAY_BE_BOOL };
 pub const Long = Type{ .ptr = null, .type_mask = internal.MAY_BE_LONG };
 pub const Double = Type{ .ptr = null, .type_mask = internal.MAY_BE_DOUBLE };
+pub const Array = Type{ .ptr = null, .type_mask = internal.MAY_BE_ARRAY };
 
 pub fn resolve(value: *zend.ZVal) TypeInfoError!TypeInfo {
     const type_info_value = value.u1.type_info;
