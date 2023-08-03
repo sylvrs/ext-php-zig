@@ -27,7 +27,8 @@ const php_options: PHPOptions = switch (builtin.os.tag) {
         .include_path = std.fmt.comptimePrint("{s}/include", .{PHPDevelPath}),
         .library_path = std.fmt.comptimePrint("{s}/lib", .{PHPDevelPath}),
         .library_name = "php8" ++ if (UsingZTS) "ts" else "",
-        .executable_path = "C:\\Users\\Matt\\Downloads\\php-8.2.7-Win32-vs16-x64\\php.exe",
+        // .executable_path = "C:\\Users\\Matt\\Downloads\\php-8.2.7-Win32-vs16-x64\\php.exe",
+        .executable_path = "php",
     },
     .linux => .{
         .include_path = "/home/matthew/php/php7/include/php",
