@@ -3,8 +3,8 @@ pub const internal = @import("internal.zig");
 pub const types = @import("types.zig");
 
 // Zend Options
-pub const Debug: u1 = 1;
-pub const ThreadSafe: u1 = 1;
+pub const Debug: bool = true;
+pub const ThreadSafe: bool = true;
 pub const ModuleAPI = 20220829;
 
 pub const ModuleEntry = internal._zend_module_entry;

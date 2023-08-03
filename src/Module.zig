@@ -1,4 +1,5 @@
 const php = @import("php.zig");
+const internal = @import("internal.zig");
 const zend = @import("zend.zig");
 const builtin = @import("builtin");
 const std = @import("std");
@@ -8,7 +9,7 @@ const BuildSystem: []const u8 = switch (builtin.os.tag) {
     .windows => "VS16",
     else => "",
 };
-const ThreadSafe = if (zend.ThreadSafe == 1) "TS" else "NTS";
+const ThreadSafe = if (zend.ThreadSafe) "TS" else "NTS";
 
 const MethodCallbackMap = std.ComptimeStringMap([]const u8, .{
     .{ "handleStartup", "setStartupCallback" },
@@ -75,40 +76,79 @@ fn createEntry(self: *Self) *zend.ModuleEntry {
         }) catch @panic("Failed to append function entry");
     }
     self.functionEntries.append(FunctionEntryTerminator) catch @panic("Failed to append function entry terminator");
-    self.entry = zend.ModuleEntry{
-        // STANDARD_MODULE_PROPERTIES
-        .size = @sizeOf(zend.ModuleEntry),
-        .zend_api = zend.ModuleAPI,
-        .zend_debug = zend.Debug,
-        .zts = zend.ThreadSafe,
-        .ini_entry = null,
-        .deps = null,
-        // actual used module fields
-        .name = self.name.ptr,
-        .functions = self.functionEntries.items.ptr,
-        .module_startup_func = self.startupFn,
-        .module_shutdown_func = self.shutdownFn,
-        .request_startup_func = null,
-        .request_shutdown_func = null,
-        .info_func = self.infoFn,
-        .version = self.version.ptr,
-        // STANDARD_MODULES_PROPERTIES
-        // NO_MODULE_GLOBALS
-        .globals_size = 0,
-        .globals_ptr = null,
-        .globals_ctor = null,
-        .globals_dtor = null,
-        .post_deactivate_func = null,
-        // STANDARD_MODULE_PROPERTIES_EX
-        .module_started = 0,
-        .type = 0,
-        .handle = null,
-        .module_number = 0,
-        .build_id = std.fmt.comptimePrint("API{d},{s}", .{
-            zend.ModuleAPI,
-            ThreadSafe,
-        }) ++ comptime if (BuildSystem.len > 0) "," ++ BuildSystem else "",
-    };
+    // windows doesn't have the module entry struct field `globals_id_ptr` even in TS mode?
+    if (zend.ThreadSafe and builtin.os.tag != .windows) {
+        self.entry = .{
+            // STANDARD_MODULE_PROPERTIES
+            .size = @sizeOf(zend.ModuleEntry),
+            .zend_api = zend.ModuleAPI,
+            .zend_debug = if (zend.Debug) 1 else 0,
+            .zts = if (zend.ThreadSafe) 1 else 0,
+            .ini_entry = null,
+            .deps = null,
+            // actual used module fields
+            .name = self.name.ptr,
+            .functions = self.functionEntries.items.ptr,
+            .module_startup_func = self.startupFn,
+            .module_shutdown_func = self.shutdownFn,
+            .request_startup_func = null,
+            .request_shutdown_func = null,
+            .info_func = self.infoFn,
+            .version = self.version.ptr,
+            // STANDARD_MODULES_PROPERTIES
+            // NO_MODULE_GLOBALS
+            .globals_size = 0,
+            .globals_id_ptr = null,
+            .globals_ctor = null,
+            .globals_dtor = null,
+            .post_deactivate_func = null,
+            // STANDARD_MODULE_PROPERTIES_EX
+            .module_started = 0,
+            .type = 0,
+            .handle = null,
+            .module_number = 0,
+            .build_id = std.fmt.comptimePrint("API{d},{s}", .{
+                zend.ModuleAPI,
+                ThreadSafe,
+            }) ++ comptime if (BuildSystem.len > 0) "," ++ BuildSystem else "",
+        };
+    } else {
+        self.entry = .{
+            // STANDARD_MODULE_PROPERTIES
+            .size = @sizeOf(zend.ModuleEntry),
+            .zend_api = zend.ModuleAPI,
+            .zend_debug = if (zend.Debug) 1 else 0,
+            .zts = if (zend.ThreadSafe) 1 else 0,
+            .ini_entry = null,
+            .deps = null,
+            // actual used module fields
+            .name = self.name.ptr,
+            .functions = self.functionEntries.items.ptr,
+            .module_startup_func = self.startupFn,
+            .module_shutdown_func = self.shutdownFn,
+            .request_startup_func = null,
+            .request_shutdown_func = null,
+            .info_func = self.infoFn,
+            .version = self.version.ptr,
+            // STANDARD_MODULES_PROPERTIES
+            // NO_MODULE_GLOBALS
+            .globals_size = 0,
+            .globals_ptr = null,
+            .globals_ctor = null,
+            .globals_dtor = null,
+            .post_deactivate_func = null,
+            // STANDARD_MODULE_PROPERTIES_EX
+            .module_started = 0,
+            .type = 0,
+            .handle = null,
+            .module_number = 0,
+            .build_id = std.fmt.comptimePrint("API{d},{s}", .{
+                zend.ModuleAPI,
+                ThreadSafe,
+            }) ++ comptime if (BuildSystem.len > 0) "," ++ BuildSystem else "",
+        };
+    }
+
     return &self.entry;
 }
 
