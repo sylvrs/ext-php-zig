@@ -3,12 +3,7 @@ const Module = php.Module;
 const builtin = @import("builtin");
 const std = @import("std");
 
-var test_module = Module.init(.{
-    .name = "test_ext",
-    .version = "0.0.2",
-    .allocator = std.heap.page_allocator,
-});
-var rand: std.rand.Random = undefined;
+var test_module: Module = undefined;
 
 pub fn displayInfo(_: *const php.ZendModuleEntry) void {
     php.printInfoStart();
@@ -20,20 +15,13 @@ pub fn displayInfo(_: *const php.ZendModuleEntry) void {
             .windows => "Windows",
             .macos => "macOS",
             .linux => "Linux",
-             else => "Unknown",
+            else => "Unknown",
         },
     });
     php.printInfoEnd();
 }
 
-pub fn handleStartup(_: usize, _: usize) !void {
-    var prng = std.rand.DefaultPrng.init(blk: {
-        var seed: u64 = undefined;
-        try std.os.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
-    });
-    rand = prng.random();
-}
+pub fn handleStartup(_: usize, _: usize) !void {}
 
 pub fn handleShutdown(version: usize, module_number: usize) !void {
     _ = version;
@@ -59,6 +47,11 @@ pub fn extJoin(values: []php.zend.ZVal) void {
 }
 
 export fn get_module() *php.ZendModuleEntry {
+    test_module = Module.init(.{
+        .name = "test_ext",
+        .version = "0.0.2",
+        .allocator = std.heap.c_allocator,
+    });
     test_module.addFunction("ext_print_join", extJoin, &.{});
     test_module.addFunction("ext_add", extAdd, &.{});
     test_module.addFunction("ext_hello", extHello, &.{});

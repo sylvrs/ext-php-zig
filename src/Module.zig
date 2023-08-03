@@ -148,7 +148,6 @@ fn createEntry(self: *Self) *zend.ModuleEntry {
             }) ++ comptime if (BuildSystem.len > 0) "," ++ BuildSystem else "",
         };
     }
-
     return &self.entry;
 }
 
