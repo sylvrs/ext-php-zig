@@ -1,0 +1,5 @@
+zig-cache/
+zig-out/
+setup.ps1
+php-devel-pack/
+.vscode/
