@@ -1,5 +1,6 @@
 const php = @import("php");
 const Module = php.Module;
+const builtin = @import("builtin");
 const std = @import("std");
 
 var test_module = Module.init(.{
@@ -15,6 +16,12 @@ pub fn displayInfo(_: *const php.ZendModuleEntry) void {
         .@"test extension support" = "enabled",
         .version = test_module.version,
         .author = "sylvrs",
+        .os = switch (builtin.os.tag) {
+            .windows => "Windows",
+            .macos => "macOS",
+            .linux => "Linux",
+             else => "Unknown",
+        },
     });
     php.printInfoEnd();
 }
