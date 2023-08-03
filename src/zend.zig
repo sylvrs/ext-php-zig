@@ -17,6 +17,8 @@ pub const String = internal._zend_string;
 pub const Value = internal._zend_value;
 pub const Result = internal.zend_result;
 pub const Type = types.Type;
+pub const ClassEntry = internal._zend_class_entry;
+
 const callFrameSlot = (alignedSize(ExecuteData) + alignedSize(ZVal) - 1) / alignedSize(ZVal);
 
 pub fn resolveZVal(execute_data: *ExecuteData, offset: usize) *ZVal {

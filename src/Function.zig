@@ -45,6 +45,18 @@ pub const ExecuteData = struct {
         return ptr[0..len];
     }
 
+    pub fn array(self: *ExecuteData, comptime T: type, offset: usize) ParseError![]T {
+        const zval = zend.resolveZVal(self.zend_execute_data, offset);
+        const zval_type = zend.types.resolve(zval) catch @panic("unexpected type");
+        if (zval_type != .Array and zval_type != .ExtendedArray) {
+            panicOnTypeMismatch(.Array, zval_type);
+            return ParseError.WrongType;
+        }
+        const arr = zval.value.arr.*;
+        const len = arr.nNumOfElements;
+        return arr.unnamed_0.arPacked[0..len];
+    }
+
     pub fn int(self: *ExecuteData, comptime T: type, offset: usize) ParseError!T {
         return @intCast(try self.long(offset));
     }
@@ -207,12 +219,9 @@ fn mapFieldToData(comptime T: type, execute_data: *ExecuteData, offset: usize) T
         // Check for string slice
         .Pointer => |ptr| switch (ptr.size == .Slice and ptr.is_const and ptr.child == u8) {
             true => execute_data.string(offset) catch php.panicWithFmt("expected string, got {any}", .{@typeName(T)}),
-            false => @compileError("unsupported pointer type: " ++ @typeName(T)),
+            false => execute_data.array(ptr.child, offset) catch php.panicWithFmt("expected array, got {any}", .{@typeName(T)}),
         },
-        .Array => |array| switch (array.child) {
-            u8 => execute_data.string(offset) catch php.panicWithFmt("expected string, got {any}", .{@typeName(T)}),
-            inline else => @compileError("unsupported array child type: " ++ @typeName(T)),
-        },
+        .Array => |array| execute_data.array(array.child, offset) catch php.panicWithFmt("expected array, got {any}", .{@typeName(T)}),
         inline else => @compileError("unsupported argument type: " ++ @typeName(T)),
     };
 }
@@ -235,7 +244,11 @@ fn mapTypeToZendType(comptime T: ?type) zend.Type {
         .Float => types.Double,
         .Bool => types.Bool,
         .Void => types.Void,
-        .Pointer => |ptr| if (ptr.size == .Slice and ptr.is_const and ptr.child == u8) types.String else @compileError("unsupported pointer type: " ++ @typeName(ptr)),
+        .Pointer => |ptr| if (ptr.size == .Slice and ptr.is_const and ptr.child == u8) {
+            return types.String;
+        } else {
+            return types.Array;
+        },
         inline else => @compileError("unsupported type: " ++ @typeName(current_type)),
     };
 }
