@@ -7,7 +7,7 @@ This library is extremely early in development and as such, isn't feature comple
 
 ## Usage
 A basic module can be created by creating a Zig file with the following contents:
-```rs
+```zig
 const php = @import("php");
 const std = @import("std");
 
