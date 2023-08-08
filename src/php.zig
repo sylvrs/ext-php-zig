@@ -1,43 +1,17 @@
 const builtin = @import("builtin");
 const std = @import("std");
+/// Internal modules that could be used by the user
 pub const internal = @import("internal.zig");
 pub const zend = @import("zend.zig");
 pub const types = @import("types.zig");
 pub const errors = @import("errors.zig");
-
-// Common Zend types that should be exposed to the user at the top level
-pub const ZendExecuteData = zend.ExecuteData;
-pub const ZVal = zend.ZVal;
-pub const ZendModuleEntry = zend.ModuleEntry;
-
+/// Exposed types for use in the user's code
 pub const Module = @import("Module.zig");
-pub const Function = @import("Function.zig");
-pub const ExecuteData = Function.ExecuteData;
-pub const ReturnValue = Function.ReturnValue;
+
+/// The maximum size of a value that can be formatted into the printInfoHeaderMap function
+const MaxInfoBufferValueSize = 1024;
 
 pub const CallingConv = if (builtin.os.tag == .windows) std.os.windows.WINAPI else .C;
-
-pub fn panicWithFmt(comptime fmt: []const u8, args: anytype) noreturn {
-    var buf: [1024]u8 = undefined;
-    @panic(std.fmt.bufPrint(&buf, fmt, args) catch unreachable);
-}
-
-fn print(value: anytype, comptime indent: []const u8) void {
-    const data = value;
-    const data_type_info = @typeInfo(@TypeOf(data));
-    // ensure that the map is a struct
-    if (data_type_info != .Struct) {
-        std.debug.print("{s}- [{s}]\n", .{ indent, @typeName(@TypeOf(data)) });
-        return;
-    }
-
-    const fields_info = data_type_info.Struct.fields;
-    std.debug.print("{s}- {s}:\n", .{ indent, @typeName(@TypeOf(data)) });
-    inline for (fields_info) |field| {
-        std.debug.print("{s}- {s}:\n", .{ indent ++ "  ", field.name });
-        print(@field(data, field.name), indent ++ "  ");
-    }
-}
 
 pub const printInfoStart = internal.php_info_print_table_start;
 pub const printInfoHeader = internal.php_info_print_table_header;
@@ -54,19 +28,33 @@ pub fn printInfoHeaderMap(map: anytype) void {
         @compileError("expected tuple or struct argument, found " ++ @typeName(@TypeOf(map)));
     }
 
-    const fields_info = map_type_info.Struct.fields;
-    var buf: [1024]u8 = undefined;
-    inline for (fields_info) |field| {
+    var buf: [MaxInfoBufferValueSize]u8 = undefined;
+    inline for (map_type_info.Struct.fields) |field| {
         // prints the key and the formatted value of the map
         const value = @field(map, field.name);
         const fmt = switch (@typeInfo(@TypeOf(value))) {
             .Int => "{d}",
             .Float => "{f}",
             .Bool => "{b}",
-            else => "{s}",
+            .Pointer => |ptr| blk: {
+                // if it is a simple pointer to a u8, then print it as a string
+                if (ptr.child == u8) {
+                    break :blk "{s}";
+                }
+                // check for a slice of u8
+                const child_type_info = @typeInfo(ptr.child);
+                if (child_type_info == .Array and child_type_info.Array.child == u8) {
+                    break :blk "{s}";
+                }
+                // otherwise, print it as a pointer
+                break :blk "{p}";
+            },
+            else => "{any}",
         };
         printInfoHeaderSimple(
-            field.name,
+            // note: this is a workaround for a bug that will print all of the keys
+            // e.g., if the keys are "foo", "bar", and "buzz", it'll print "foobarbuzz", "barbuzz", and "buzz"
+            field.name ++ "\x00",
             // append null terminator to the format string to ensure that PHP doesn't read past the end of the string
             // this is so that we can just use a small buffer on the stack instead of allocating a new string
             std.fmt.bufPrint(&buf, fmt ++ "\x00", .{value}) catch @panic("error formatting string into buffer"),
