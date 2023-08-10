@@ -27,14 +27,14 @@ const php_options: PHPOptions = switch (builtin.os.tag) {
         .include_path = std.fmt.comptimePrint("{s}/include", .{PHPDevelPath}),
         .library_path = std.fmt.comptimePrint("{s}/lib", .{PHPDevelPath}),
         .library_name = "php8" ++ if (UsingZTS) "ts" else "",
-        // .executable_path = "C:\\Users\\Matt\\Downloads\\php-8.2.7-Win32-vs16-x64\\php.exe",
-        .executable_path = "php",
+        .executable_path = "C:\\Users\\Matt\\Downloads\\php-8.2.7-Win32-vs16-x64\\php.exe",
+        // .executable_path = "php",
     },
     .linux => .{
         .include_path = "/home/matthew/php/php7/include/php",
         .executable_path = "php",
     },
-    inline else => @compileError("MacOS is not supported yet"),
+    inline else => @compileError("Unsupported OS"),
 };
 
 // Here is the line used to resolve the dependency loop upon a new build

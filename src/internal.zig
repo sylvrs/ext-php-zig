@@ -19,5 +19,6 @@ pub usingnamespace @cImport({
     @cInclude("ext/standard/info.h");
     // Zend imports
     @cInclude("zend_API.h");
+    @cInclude("zend_exceptions.h");
     @cInclude("zend_type_info.h");
 });

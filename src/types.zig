@@ -47,10 +47,50 @@ pub const Long = Type{ .ptr = null, .type_mask = internal.MAY_BE_LONG };
 pub const Double = Type{ .ptr = null, .type_mask = internal.MAY_BE_DOUBLE };
 pub const Array = Type{ .ptr = null, .type_mask = internal.MAY_BE_ARRAY };
 
+pub fn resolveFromType(comptime T: type) TypeInfoError!TypeInfo {
+    return switch (@typeInfo(T)) {
+        .Null => TypeInfo.Null,
+        .Void => TypeInfo.Void,
+        .Bool => TypeInfo.Bool,
+        .Int => TypeInfo.Long,
+        .Float => TypeInfo.Double,
+        .Pointer => |ptr| if (ptr.size == .slice and ptr.child == u8) TypeInfo.String else @compileError("Unsupported type: " ++ @typeName(T)),
+        inline else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
+}
+
 pub fn resolve(value: *zend.ZVal) TypeInfoError!TypeInfo {
     const type_info_value = value.u1.type_info;
     if (type_info_value < @intFromEnum(TypeInfo.Undefined) or type_info_value > @intFromEnum(TypeInfo.ExtendedArray)) {
         return TypeInfoError.Invalid;
     }
     return @as(TypeInfo, @enumFromInt(type_info_value));
+}
+
+pub fn mapToZendTypeInfo(comptime T: type) TypeInfo {
+    return switch (@typeInfo(T)) {
+        .Int => .Long,
+        .Float => .Double,
+        .Bool => .Bool,
+        .Void => .Void,
+        .Pointer => |ptr| if (ptr.size == .Slice and ptr.is_const and ptr.child == u8) .String else @compileError("unsupported pointer type: " ++ @typeName(ptr)),
+        inline else => @compileError("unsupported type info: " ++ @typeName(T)),
+    };
+}
+
+pub fn mapToZendType(comptime T: ?type) zend.Type {
+    const current_type = T orelse return .Void;
+    return switch (@typeInfo(current_type)) {
+        .Int => Long,
+        .Float => Double,
+        .Bool => Bool,
+        .Void => Void,
+        .Pointer => |ptr| if (ptr.size == .Slice and ptr.is_const and ptr.child == u8) {
+            return String;
+        } else {
+            return Array;
+        },
+        .ErrorUnion => |error_union| mapToZendType(error_union.payload),
+        inline else => @compileError("unsupported type: " ++ @typeName(current_type)),
+    };
 }
