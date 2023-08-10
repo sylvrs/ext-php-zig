@@ -7,6 +7,7 @@ pub const types = @import("types.zig");
 pub const errors = @import("errors.zig");
 /// Exposed types for use in the user's code
 pub const Module = @import("Module.zig");
+pub const Function = @import("Function.zig");
 
 /// The maximum size of a value that can be formatted into the printInfoHeaderMap function
 const MaxInfoBufferValueSize = 1024;

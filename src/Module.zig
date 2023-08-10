@@ -1,8 +1,10 @@
 const php = @import("php.zig");
 const internal = @import("internal.zig");
 const zend = @import("zend.zig");
+const types = @import("types.zig");
 const builtin = @import("builtin");
 const std = @import("std");
+const Function = @import("Function.zig");
 
 // Module API version parts
 const BuildSystem: []const u8 = switch (builtin.os.tag) {
@@ -17,7 +19,7 @@ const MethodCallbackMap = std.ComptimeStringMap([]const u8, .{
     .{ "displayInfo", "setInfoCallback" },
 });
 
-const FunctionEntryTerminator = zend.FunctionEntry{
+pub const FunctionEntryTerminator = zend.FunctionEntry{
     .fname = null,
     .handler = null,
     .arg_info = null,
@@ -41,6 +43,9 @@ version: []const u8,
 allocator: std.mem.Allocator,
 /// The internal entry created by the module
 entry: zend.ModuleEntry = undefined,
+
+// ArrayLists to store the functions and their corresponding function entries
+functions: std.ArrayList(Function),
 functionEntries: std.ArrayList(zend.FunctionEntry),
 
 /// The functions that will be called by the module on startup and shutdown
@@ -48,32 +53,34 @@ startupFn: ?*const fn (type: c_int, version_number: c_int) callconv(.C) c_int = 
 shutdownFn: ?*const fn (type: c_int, version_number: c_int) callconv(.C) c_int = null,
 /// The function that will be called by phpinfo() to display information about the module
 infoFn: ?*const fn (entry: [*c]const zend.ModuleEntry) callconv(.C) void = null,
-/// The functions that will be added to the module
-functions: std.ArrayList(php.Function),
 
 pub fn init(options: ModuleOptions) Self {
     return Self{
         .name = options.name,
         .version = options.version,
         .allocator = options.allocator,
-        .functions = std.ArrayList(php.Function).init(options.allocator),
+        .functions = std.ArrayList(Function).init(options.allocator),
         .functionEntries = std.ArrayList(zend.FunctionEntry).init(options.allocator),
     };
 }
 
 pub fn deinit(self: *Self) void {
+    self.functionEntries.deinit();
+    for (self.functions.items) |function| {
+        function.deinit();
+    }
     self.functions.deinit();
 }
 
 fn createEntry(self: *Self) *zend.ModuleEntry {
     for (self.functions.items) |function| {
-        self.functionEntries.append(zend.FunctionEntry{
+        self.functionEntries.append(.{
             .fname = function.name.ptr,
-            .handler = function.caller,
-            .arg_info = function.arg_info.?.ptr,
-            .num_args = 0,
+            .handler = function.handler,
+            .arg_info = function.stored_arg_info.items.ptr,
+            .num_args = @intCast(function.argument_info.len),
             .flags = function.flags,
-        }) catch @panic("Failed to append function entry");
+        }) catch unreachable;
     }
     self.functionEntries.append(FunctionEntryTerminator) catch @panic("Failed to append function entry terminator");
     // windows doesn't have the module entry struct field `globals_id_ptr` even in TS mode?
@@ -207,8 +214,13 @@ pub fn setInfoCallback(self: *Self, comptime callback: *const fn (entry: *const 
     }.info;
 }
 
-pub fn addFunction(self: *Self, name: []const u8, comptime func: anytype, comptime metadata: []const php.Function.ArgumentMetadata) void {
-    self.functions.append(php.Function.init(name, func, metadata)) catch @panic("Failed to append function");
+pub fn addFunction(self: *Self, name: []const u8, comptime func: anytype, comptime metadata: []const Function.ArgumentMetadata) void {
+    self.functions.append(Function.init(
+        self.allocator,
+        name,
+        func,
+        metadata,
+    )) catch @panic("Failed to append function");
 }
 
 /// create creates the module entry for the module
