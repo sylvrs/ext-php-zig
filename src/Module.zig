@@ -1,17 +1,81 @@
-const php = @import("php.zig");
-const internal = @import("internal.zig");
-const zend = @import("zend.zig");
-const types = @import("types.zig");
 const builtin = @import("builtin");
 const std = @import("std");
-const Function = @import("Function.zig");
+const internal = @import("internal.zig");
+const zend = @import("zend.zig");
 
-// Module API version parts
-const BuildSystem: []const u8 = switch (builtin.os.tag) {
-    .windows => "VS16",
-    else => "",
-};
-const ThreadSafe = if (zend.ThreadSafe) "TS" else "NTS";
+const Self = @This();
+/// The name of the extension
+name: []const u8,
+/// The version of the extension
+version: []const u8,
+/// The allocator used to hold parts of the extension's data
+allocator: std.mem.Allocator,
+/// Whether the extension is built for PHP's debug mode
+debug: bool,
+/// Whether the extension is built for PHP's thread-safe mode
+thread_safe: bool,
+/// The build ID associated with the extension
+build_id: []const u8,
+/// The generated entry for exporting in `get_module`
+entry: zend.ModuleEntry = undefined,
+
+pub fn init(comptime options: struct {
+    name: []const u8,
+    version: []const u8,
+    allocator: std.mem.Allocator,
+    debug: bool = false,
+    thread_safe: bool = true,
+}) Self {
+    return Self{
+        .name = options.name,
+        .version = options.version,
+        .allocator = options.allocator,
+        .debug = options.debug,
+        .thread_safe = options.thread_safe,
+        .build_id = std.fmt.comptimePrint("API{d},{s}{s}", .{
+            internal.ZEND_MODULE_API_NO,
+            if (options.thread_safe) "TS" else "NTS",
+            if (builtin.os.tag == .windows) ",VS16" else "",
+        }),
+    };
+}
+
+/// `build` will build the module entry for the extension
+fn build(self: *Self) void {
+    self.entry.size = @sizeOf(zend.ModuleEntry);
+    self.entry.zend_api = internal.ZEND_MODULE_API_NO;
+    self.entry.zend_debug = if (self.debug) 1 else 0;
+    self.entry.zts = if (self.thread_safe) 1 else 0;
+    self.entry.ini_entry = null;
+    self.entry.deps = null;
+    self.entry.name = self.name.ptr;
+    self.entry.functions = null;
+    self.entry.module_startup_func = null;
+    self.entry.module_shutdown_func = null;
+    self.entry.request_startup_func = null;
+    self.entry.request_shutdown_func = null;
+    self.entry.info_func = null;
+    self.entry.version = self.version.ptr;
+    self.entry.globals_size = 0;
+    // Resolve field name at compile time
+    const field = comptime blk: {
+        for (&.{ "globals_ptr", "globals_id_ptr" }) |field| {
+            if (@hasField(zend.ModuleEntry, field)) {
+                break :blk field;
+            }
+        }
+        @compileError("ModuleEntry does not have globals_ptr or globals_id_ptr");
+    };
+    @field(self.entry, field) = null;
+    self.entry.globals_ctor = null;
+    self.entry.globals_dtor = null;
+    self.entry.post_deactivate_func = null;
+    self.entry.module_started = 0;
+    self.entry.type = 0;
+    self.entry.handle = null;
+    self.entry.module_number = 0;
+    self.entry.build_id = self.build_id.ptr;
+}
 
 const MethodCallbackMap = std.ComptimeStringMap([]const u8, .{
     .{ "handleStartup", "setStartupCallback" },
@@ -19,171 +83,9 @@ const MethodCallbackMap = std.ComptimeStringMap([]const u8, .{
     .{ "displayInfo", "setInfoCallback" },
 });
 
-pub const FunctionEntryTerminator = zend.FunctionEntry{
-    .fname = null,
-    .handler = null,
-    .arg_info = null,
-    .num_args = 0,
-    .flags = 0,
-};
-
-pub const ModuleOptions = struct {
-    name: []const u8,
-    version: []const u8,
-    allocator: std.mem.Allocator,
-};
-
-const Self = @This();
-
-/// The name of the extension
-name: []const u8,
-/// The version of the extension
-version: []const u8,
-/// The allocator used by the module for function registration
-allocator: std.mem.Allocator,
-/// The internal entry created by the module
-entry: zend.ModuleEntry = undefined,
-
-// ArrayLists to store the functions and their corresponding function entries
-functions: std.ArrayList(Function),
-functionEntries: std.ArrayList(zend.FunctionEntry),
-
-/// The functions that will be called by the module on startup and shutdown
-startupFn: ?*const fn (type: c_int, version_number: c_int) callconv(.C) c_int = null,
-shutdownFn: ?*const fn (type: c_int, version_number: c_int) callconv(.C) c_int = null,
-/// The function that will be called by phpinfo() to display information about the module
-infoFn: ?*const fn (entry: [*c]const zend.ModuleEntry) callconv(.C) void = null,
-
-pub fn init(options: ModuleOptions) Self {
-    return Self{
-        .name = options.name,
-        .version = options.version,
-        .allocator = options.allocator,
-        .functions = std.ArrayList(Function).init(options.allocator),
-        .functionEntries = std.ArrayList(zend.FunctionEntry).init(options.allocator),
-    };
-}
-
-pub fn deinit(self: *Self) void {
-    self.functionEntries.deinit();
-    for (self.functions.items) |function| {
-        function.deinit();
-    }
-    self.functions.deinit();
-}
-
-fn createEntry(self: *Self) *zend.ModuleEntry {
-    for (self.functions.items) |function| {
-        self.functionEntries.append(.{
-            .fname = function.name.ptr,
-            .handler = function.handler,
-            .arg_info = function.stored_arg_info.items.ptr,
-            .num_args = @intCast(function.argument_info.len),
-            .flags = function.flags,
-        }) catch unreachable;
-    }
-    self.functionEntries.append(FunctionEntryTerminator) catch @panic("Failed to append function entry terminator");
-    // windows doesn't have the module entry struct field `globals_id_ptr` even in TS mode?
-    if (zend.ThreadSafe and builtin.os.tag != .windows) {
-        self.entry = .{
-            // STANDARD_MODULE_PROPERTIES
-            .size = @sizeOf(zend.ModuleEntry),
-            .zend_api = zend.ModuleAPI,
-            .zend_debug = if (zend.Debug) 1 else 0,
-            .zts = if (zend.ThreadSafe) 1 else 0,
-            .ini_entry = null,
-            .deps = null,
-            // actual used module fields
-            .name = self.name.ptr,
-            .functions = self.functionEntries.items.ptr,
-            .module_startup_func = self.startupFn,
-            .module_shutdown_func = self.shutdownFn,
-            .request_startup_func = null,
-            .request_shutdown_func = null,
-            .info_func = self.infoFn,
-            .version = self.version.ptr,
-            // STANDARD_MODULES_PROPERTIES
-            // NO_MODULE_GLOBALS
-            .globals_size = 0,
-            .globals_id_ptr = null,
-            .globals_ctor = null,
-            .globals_dtor = null,
-            .post_deactivate_func = null,
-            // STANDARD_MODULE_PROPERTIES_EX
-            .module_started = 0,
-            .type = 0,
-            .handle = null,
-            .module_number = 0,
-            .build_id = std.fmt.comptimePrint("API{d},{s}", .{
-                zend.ModuleAPI,
-                ThreadSafe,
-            }) ++ comptime if (BuildSystem.len > 0) "," ++ BuildSystem else "",
-        };
-    } else {
-        self.entry = .{
-            // STANDARD_MODULE_PROPERTIES
-            .size = @sizeOf(zend.ModuleEntry),
-            .zend_api = zend.ModuleAPI,
-            .zend_debug = if (zend.Debug) 1 else 0,
-            .zts = if (zend.ThreadSafe) 1 else 0,
-            .ini_entry = null,
-            .deps = null,
-            // actual used module fields
-            .name = self.name.ptr,
-            .functions = self.functionEntries.items.ptr,
-            .module_startup_func = self.startupFn,
-            .module_shutdown_func = self.shutdownFn,
-            .request_startup_func = null,
-            .request_shutdown_func = null,
-            .info_func = self.infoFn,
-            .version = self.version.ptr,
-            // STANDARD_MODULES_PROPERTIES
-            // NO_MODULE_GLOBALS
-            .globals_size = 0,
-            .globals_ptr = null,
-            .globals_ctor = null,
-            .globals_dtor = null,
-            .post_deactivate_func = null,
-            // STANDARD_MODULE_PROPERTIES_EX
-            .module_started = 0,
-            .type = 0,
-            .handle = null,
-            .module_number = 0,
-            .build_id = std.fmt.comptimePrint("API{d},{s}", .{
-                zend.ModuleAPI,
-                ThreadSafe,
-            }) ++ comptime if (BuildSystem.len > 0) "," ++ BuildSystem else "",
-        };
-    }
-    return &self.entry;
-}
-
-/// searchForCallbacks attempts to automatically add module callbacks from the struct passed
-/// To do so, it will check for the following functions:
-/// - handleStartup(type: usize, module_number: usize) usize - The function that will be called on module startup
-/// - handleStartup(type: usize, module_number: usize) usize - The function that will be called on module shutdown
-/// - displayInfo(entry: *const zend.ModuleEntry) void - The function that will be called by phpinfo() to display information about the module
-///
-/// These functions must be marked as `pub` in order to properly be found and not errored on
-pub fn searchForCallbacks(self: *Self, comptime value: type) void {
-    inline for (MethodCallbackMap.kvs) |entry| {
-        const method = entry.key;
-        const callbackName = entry.value;
-        // if the method exists & is a function, attempt to call it
-        if (@hasDecl(value, method)) {
-            const field = @field(value, method);
-            if (@typeInfo(@TypeOf(field)) != .Fn) {
-                @compileError(method ++ " must be a function");
-            }
-            // get method from callback name & call it
-            const callbackMethod = @field(@This(), callbackName);
-            @call(.auto, callbackMethod, .{ self, field });
-        }
-    }
-}
-
-pub fn setStartupCallback(self: *Self, comptime callback: *const fn (type: usize, version_number: usize) anyerror!void) void {
-    self.startupFn = struct {
+/// `setStartupCallback` will assign the startup function for the module
+pub fn setStartupCallback(self: *Self, comptime callback: *const fn (version: usize, module_number: usize) anyerror!void) void {
+    self.entry.module_startup_func = struct {
         fn startup(@"type": c_int, version_number: c_int) callconv(.C) c_int {
             callback(@as(usize, @intCast(@"type")), @as(usize, @intCast(version_number))) catch |err| {
                 std.debug.print("Failed to startup module: {any}\n", .{err});
@@ -194,8 +96,9 @@ pub fn setStartupCallback(self: *Self, comptime callback: *const fn (type: usize
     }.startup;
 }
 
-pub fn setShutdownCallback(self: *Self, comptime callback: *const fn (type: usize, version_number: usize) anyerror!void) void {
-    self.shutdownFn = struct {
+/// `setShutdownCallback` will assign the shutdown function for the module
+pub fn setShutdownCallback(self: *Self, comptime callback: *const fn (version: usize, module_number: usize) anyerror!void) void {
+    self.entry.module_shutdown_func = struct {
         fn shutdown(@"type": c_int, version_number: c_int) callconv(.C) c_int {
             callback(@as(usize, @intCast(@"type")), @as(usize, @intCast(version_number))) catch |err| {
                 std.debug.print("Failed to shutdown module: {any}\n", .{err});
@@ -206,26 +109,39 @@ pub fn setShutdownCallback(self: *Self, comptime callback: *const fn (type: usiz
     }.shutdown;
 }
 
-pub fn setInfoCallback(self: *Self, comptime callback: *const fn (entry: *const zend.ModuleEntry) void) void {
-    self.infoFn = struct {
+/// `setInfoCallback` will assign the info function for the module
+pub fn setInfoCallback(self: *Self, comptime callback: *const fn (module: *const zend.ModuleEntry) void) void {
+    self.entry.info_func = struct {
         fn info(c_entry: [*c]const zend.ModuleEntry) callconv(.C) void {
             callback(@as(*const zend.ModuleEntry, c_entry));
         }
     }.info;
 }
 
-pub fn addFunction(self: *Self, name: []const u8, comptime func: anytype, comptime metadata: []const Function.ArgumentMetadata) void {
-    self.functions.append(Function.init(
-        self.allocator,
-        name,
-        func,
-        metadata,
-    )) catch @panic("Failed to append function");
+/// `resolveModuleFuncs` will attempt to resolve and assign the module functions from the given context
+/// Here are the methods that can be resolved:
+/// - `handleStartup(version: usize: module_number: usize) !void` - The startup function for the module
+/// - `handleShutdown(version: usize: module_number: usize) !void` - The shutdown function for the module
+/// - `displayInfo(module: *const zend.ModuleEntry) void` - The info function for the module
+fn resolveModuleFuncs(self: *Self, comptime ctx: anytype) void {
+    inline for (MethodCallbackMap.kvs) |entry| {
+        if (@hasDecl(ctx, entry.key)) {
+            const method = entry.key;
+            const callbackName = entry.value;
+            const field = @field(ctx, method);
+            if (@typeInfo(@TypeOf(field)) != .Fn) {
+                @compileError(method ++ " must be a function");
+            }
+            // get method from callback name & call it
+            const callbackMethod = @field(@This(), callbackName);
+            @call(.auto, callbackMethod, .{ self, field });
+        }
+    }
 }
 
-/// create creates the module entry for the module
-/// It will automatically search for callbacks and initialize the module entry with the context passed
-pub fn create(self: *Self, context: anytype) *zend.ModuleEntry {
-    self.searchForCallbacks(context);
-    return self.createEntry();
+/// `create` will generate and return a pointer to the module entry
+pub fn create(self: *Self, comptime ctx: anytype) *zend.ModuleEntry {
+    self.build();
+    self.resolveModuleFuncs(ctx);
+    return &self.entry;
 }
