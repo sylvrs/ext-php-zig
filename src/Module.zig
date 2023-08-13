@@ -77,6 +77,8 @@ fn build(self: *Self) void {
     self.entry.build_id = self.build_id.ptr;
 }
 
+/// MethodCallbackMap is a map of the searched method name to the Module's `setXCallback` equivalent
+/// This reduces boilerplate and the need to manually assign the callbacks (which could be desireable, but not the default)
 const MethodCallbackMap = std.ComptimeStringMap([]const u8, .{
     .{ "handleStartup", "setStartupCallback" },
     .{ "handleShutdown", "setShutdownCallback" },
@@ -125,15 +127,10 @@ pub fn setInfoCallback(self: *Self, comptime callback: *const fn (module: *const
 /// - `displayInfo(module: *const zend.ModuleEntry) void` - The info function for the module
 fn resolveModuleFuncs(self: *Self, comptime ctx: anytype) void {
     inline for (MethodCallbackMap.kvs) |entry| {
-        if (@hasDecl(ctx, entry.key)) {
-            const method = entry.key;
-            const callbackName = entry.value;
-            const field = @field(ctx, method);
-            if (@typeInfo(@TypeOf(field)) != .Fn) {
-                @compileError(method ++ " must be a function");
-            }
+        if (comptime std.meta.trait.hasFn(entry.key)(ctx)) {
+            const field = @field(ctx, entry.key);
             // get method from callback name & call it
-            const callbackMethod = @field(@This(), callbackName);
+            const callbackMethod = @field(@This(), entry.value);
             @call(.auto, callbackMethod, .{ self, field });
         }
     }
