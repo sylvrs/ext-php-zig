@@ -33,7 +33,7 @@ pub fn extFibonacci(n: i64) i64 {
 }
 
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
-var module: php.Module = php.Module.init(.{
+var module = php.Module.init(.{
     .name = "test_ext",
     .version = "0.0.2",
     .allocator = gpa.allocator(),
