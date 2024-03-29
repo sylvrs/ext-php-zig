@@ -49,8 +49,6 @@ pub fn extFibonacci(n: i64) i64 {
     return extFibonacci(n - 1) + extFibonacci(n - 2);
 }
 
-pub fn 
-
 // This is the most important function when creating a module as this is what PHP will look for when loading the module
 export fn get_module() *php.ZendModuleEntry {
     test_module.addFunction("ext_hello", extHello, &.{});
