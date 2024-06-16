@@ -1,4 +1,5 @@
-zig-cache/
+.zig-cache/
+examples/.zig-cache
 zig-out/
 setup.ps1
 php-devel-pack/

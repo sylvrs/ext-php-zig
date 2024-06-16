@@ -26,7 +26,7 @@ pub fn map(comptime values: anytype, comptime func: anytype) [values.len](@typeI
         result[index] = @call(
             .auto,
             func,
-            if (params.len == 2) &.{ value, index } else &.{value},
+            if (params.len == 2) .{ value, index } else .{value},
         );
     }
     return result;

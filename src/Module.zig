@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const internal = @import("internal.zig");
 const zend = @import("zend.zig");
+const Function = @import("Function.zig");
 
 const Self = @This();
 /// The name of the extension
@@ -16,6 +17,10 @@ debug: bool,
 thread_safe: bool,
 /// The build ID associated with the extension
 build_id: []const u8,
+/// A list of functions that are exported by the extension
+functions: std.ArrayListUnmanaged(Function) = .{},
+/// The generated function entries used in the module entry
+function_entries: std.ArrayListUnmanaged(zend.FunctionEntry) = .{},
 /// The generated entry for exporting in `get_module`
 entry: zend.ModuleEntry = undefined,
 
@@ -40,6 +45,11 @@ pub fn init(comptime options: struct {
     };
 }
 
+pub fn deinit(self: *Self) void {
+    self.functions.deinit(self.allocator);
+    self.function_entries.deinit(self.allocator);
+}
+
 /// `build` will build the module entry for the extension
 fn build(self: *Self) void {
     self.entry.size = @sizeOf(zend.ModuleEntry);
@@ -49,7 +59,13 @@ fn build(self: *Self) void {
     self.entry.ini_entry = null;
     self.entry.deps = null;
     self.entry.name = self.name.ptr;
-    self.entry.functions = null;
+    // Build function entry list
+    for (self.functions.items) |*func| {
+        self.function_entries.append(self.allocator, func.build()) catch @panic("Failed to add function entry to module");
+    }
+    // Every function entry list must end with a terminator
+    self.function_entries.append(self.allocator, Function.EntryTerminator) catch @panic("Failed to add function entry terminator to module");
+    self.entry.functions = self.function_entries.items.ptr;
     self.entry.module_startup_func = null;
     self.entry.module_shutdown_func = null;
     self.entry.request_startup_func = null;
@@ -59,7 +75,7 @@ fn build(self: *Self) void {
     self.entry.globals_size = 0;
     // Resolve field name at compile time
     const field = comptime blk: {
-        for (&.{ "globals_ptr", "globals_id_ptr" }) |field| {
+        for ([_][]const u8{ "globals_ptr", "globals_id_ptr" }) |field| {
             if (@hasField(zend.ModuleEntry, field)) {
                 break :blk field;
             }
@@ -77,8 +93,13 @@ fn build(self: *Self) void {
     self.entry.build_id = self.build_id.ptr;
 }
 
+/// `addFunction` will add a function to the module
+pub fn addFunction(self: *Self, comptime name: []const u8, comptime func: anytype, comptime metadata: []const Function.ArgumentMetadata) void {
+    self.functions.append(self.allocator, Function.init(name, func, metadata)) catch @panic("Failed to add function to module");
+}
+
 /// MethodCallbackMap is a map of the searched method name to the Module's `setXCallback` equivalent
-/// This reduces boilerplate and the need to manually assign the callbacks (which could be desireable, but not the default)
+/// This reduces boilerplate by removing the need to manually assign the callbacks (which could be desireable, but not the default)
 const MethodCallbackMap = std.ComptimeStringMap([]const u8, .{
     .{ "handleStartup", "setStartupCallback" },
     .{ "handleShutdown", "setShutdownCallback" },

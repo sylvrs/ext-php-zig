@@ -30,30 +30,29 @@ pub const PHPLibrary = struct {
             development_paths: PHPDevelopmentPaths,
             debug: bool,
             thread_safe: bool,
-            target: *std.zig.CrossTarget,
+            target: *std.Build.ResolvedTarget,
             optimize: std.builtin.OptimizeMode,
         },
     ) !PHPLibrary {
         // MSVC is needed for PHP on Windows
-        if (options.target.isWindows()) {
-            options.target.*.abi = .msvc;
+        if (options.target.query.os_tag == .windows) {
+            options.target.query.abi = .msvc;
         }
 
         // create Zig module
         const module = b.addModule("php-ext-zig", .{
-            .source_file = .{ .path = "src/php.zig" },
-            .dependencies = &.{},
+            .root_source_file = b.path("src/php.zig"),
         });
 
         const lib = b.addSharedLibrary(.{
             .name = options.name,
-            .root_source_file = .{ .path = options.entrypoint },
+            .root_source_file = b.path(options.entrypoint),
             .target = options.target.*,
             .optimize = options.optimize,
             .link_libc = true,
         });
         // Add module to library
-        lib.addModule("php", module);
+        lib.root_module.addImport("php", module);
 
         var buf: [1024]u8 = undefined;
         inline for (PHPIncludePaths) |path| {
